@@ -13,3 +13,18 @@ dist/
 .vscode/
 Thumbs.db
 
+
+# MiqBOT MVP artifacts
+mvp1_bridge_server/target/
+mvp1_bridge_server/certs/*.key.pem
+mvp1_bridge_server/certs/*.crt.pem
+mvp1_bridge_server/certs/*.p12
+mvp1_bridge_server/certs/*.csr.pem
+mvp1_bridge_server/certs/*.srl
+mvp1_bridge_server/certs/*.ext
+mvp2_fabric_mod/.gradle/
+mvp2_fabric_mod/build/
+mvp2_fabric_mod/run/
+mvp3_tts_server/.venv/
+mvp4_obs_subtitles/.venv/
+

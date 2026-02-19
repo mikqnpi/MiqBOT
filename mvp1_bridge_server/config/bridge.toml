@@ -1,0 +1,10 @@
+bind_addr = "0.0.0.0:40100"
+
+[limits]
+max_ws_message_bytes = 262144
+hello_timeout_ms = 5000
+
+[tls]
+server_cert_pem = "certs/server.crt.pem"
+server_key_pem = "certs/server.key.pem"
+client_ca_cert_pem = "certs/ca.crt.pem"

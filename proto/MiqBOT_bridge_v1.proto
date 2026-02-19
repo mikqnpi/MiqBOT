@@ -1,0 +1,158 @@
+syntax = "proto3";
+package MiqBOT.bridge.v1;
+
+option java_package = "io.MiqBOT.bridge.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MiqBOTBridgeV1";
+
+enum PeerRole {
+  PEER_ROLE_UNSPECIFIED = 0;
+  PEER_ROLE_GAME_CLIENT = 1;
+  PEER_ROLE_BRIDGE_SERVER = 2;
+  PEER_ROLE_ORCHESTRATOR = 3;
+}
+
+enum Capability {
+  CAP_UNSPECIFIED = 0;
+  CAP_TELEMETRY_V1 = 1;
+  CAP_ACTIONS_V1 = 2;
+  CAP_TIMESYNC_V1 = 3;
+}
+
+enum Dimension {
+  DIMENSION_UNSPECIFIED = 0;
+  DIMENSION_OVERWORLD = 1;
+  DIMENSION_NETHER = 2;
+  DIMENSION_END = 3;
+  DIMENSION_OTHER = 99;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_PROTOCOL_VIOLATION = 1;
+  ERROR_CODE_UNAUTHORIZED = 2;
+  ERROR_CODE_PAYLOAD_TOO_LARGE = 3;
+  ERROR_CODE_DECODE_FAILED = 4;
+  ERROR_CODE_TIMEOUT = 5;
+  ERROR_CODE_INTERNAL = 100;
+}
+
+message Envelope {
+  uint32 protocol_version = 1;
+  string session_id = 2;
+  uint64 seq = 3;
+  uint64 ack = 4;
+  uint64 mono_ms = 5;
+  uint64 wall_unix_ms = 6;
+
+  oneof payload {
+    Hello hello = 10;
+    Heartbeat heartbeat = 11;
+    TelemetryFrame telemetry = 12;
+    TimeSyncRequest time_sync_req = 13;
+    TimeSyncResponse time_sync_res = 14;
+
+    ActionRequest action_req = 20;
+    ActionAck action_ack = 21;
+    ActionResult action_res = 22;
+
+    ErrorFrame error = 30;
+  }
+}
+
+message Hello {
+  string agent_id = 1;
+  PeerRole role = 2;
+  repeated Capability capabilities = 3;
+  string client_version = 4;
+}
+
+message Heartbeat {
+  uint32 rx_queue_len = 1;
+  uint32 tx_queue_len = 2;
+  uint32 dropped_frames = 3;
+  uint64 last_state_version = 4;
+}
+
+message Vec3d {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message TelemetryFrame {
+  uint64 state_version = 1;
+  uint64 world_tick = 2;
+  Dimension dimension = 3;
+
+  Vec3d pos = 4;
+  double yaw_deg = 5;
+  double pitch_deg = 6;
+
+  uint32 hp = 7;
+  uint32 hunger = 8;
+  uint32 air = 9;
+
+  bool is_sprinting = 10;
+  bool is_sneaking = 11;
+  bool is_on_ground = 12;
+}
+
+message TimeSyncRequest {
+  uint64 t0_mono_ms = 1;
+}
+
+message TimeSyncResponse {
+  uint64 t0_mono_ms = 1;
+  uint64 t1_mono_ms = 2;
+  uint64 t2_mono_ms = 3;
+}
+
+enum ActionType {
+  ACTION_TYPE_UNSPECIFIED = 0;
+  ACTION_TYPE_STOP_ALL = 1;
+  ACTION_TYPE_MOVE_VEC = 2;
+}
+
+message MoveVec {
+  float forward = 1;
+  float strafe = 2;
+  float yaw_delta_deg = 3;
+  float pitch_delta_deg = 4;
+  uint32 duration_ms = 5;
+}
+
+message ActionRequest {
+  string request_id = 1;
+  uint64 expected_state_version = 2;
+  ActionType type = 3;
+
+  MoveVec move = 10;
+}
+
+message ActionAck {
+  string request_id = 1;
+  bool accepted = 2;
+  string reason = 3;
+}
+
+enum ActionStatus {
+  ACTION_STATUS_UNSPECIFIED = 0;
+  ACTION_STATUS_OK = 1;
+  ACTION_STATUS_REJECTED = 2;
+  ACTION_STATUS_TIMEOUT = 3;
+  ACTION_STATUS_FAILED = 4;
+}
+
+message ActionResult {
+  string request_id = 1;
+  ActionStatus status = 2;
+  string detail = 3;
+  uint64 final_state_version = 4;
+}
+
+message ErrorFrame {
+  ErrorCode code = 1;
+  string message = 2;
+  string correlation_id = 3;
+}

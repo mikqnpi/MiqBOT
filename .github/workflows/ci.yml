@@ -1,21 +1,127 @@
-﻿name: CI
+name: CI
 
 on:
   push:
   pull_request:
 
 jobs:
-  smoke:
+  repo-gates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Validate canonical contract and secret files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t proto_files < <(git ls-files '*MiqBOT_bridge_v1.proto')
+          if [ "${#proto_files[@]}" -ne 1 ] || [ "${proto_files[0]}" != "proto/MiqBOT_bridge_v1.proto" ]; then
+            echo "Canonical proto violation. Expected exactly: proto/MiqBOT_bridge_v1.proto"
+            printf 'Found:\n%s\n' "${proto_files[@]-}"
+            exit 1
+          fi
+
+          leaked="$(git ls-files | grep -E '(\\.key\\.pem$|\\.p12$)' || true)"
+          if [ -n "$leaked" ]; then
+            echo "Secret file patterns are tracked in git:"
+            echo "$leaked"
+            exit 1
+          fi
+
+          required=(
+            "mvp1_bridge_server/DOMAIN_CHARTER.md"
+            "mvp2_fabric_mod/DOMAIN_CHARTER.md"
+            "mvp3_tts_server/DOMAIN_CHARTER.md"
+            "mvp4_obs_subtitles/DOMAIN_CHARTER.md"
+            "docs/migration/mvp_to_unified.md"
+            "docs/runbooks/mvp_bringup.md"
+          )
+          for f in "${required[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "Missing required governance file: $f"
+              exit 1
+            fi
+          done
+
+  python-root-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install
+          python-version: '3.11'
+      - name: Install package
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-      - name: Run
+      - name: Run root smoke
         run: python -m miqbot.main --name MiqBOT --message "CI smoke test"
+
+  rust-bridge-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo check
+        run: cargo check --manifest-path mvp1_bridge_server/Cargo.toml
+
+  java-fabric-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11'
+      - name: Gradle build
+        run: gradle -p mvp2_fabric_mod build --no-daemon
+
+  python-mvp-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate MVP-3 package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r mvp3_tts_server/requirements.txt
+          python -m py_compile mvp3_tts_server/server.py
+      - name: Validate MVP-4 package
+        run: |
+          pip install -r mvp4_obs_subtitles/requirements.txt
+          python -m py_compile mvp4_obs_subtitles/obs_subtitles.py
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+      - name: Audit dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          audit_req() {
+            req_file="$1"
+            if grep -Eq '^[[:space:]]*[^#[:space:]]' "$req_file"; then
+              echo "Auditing $req_file"
+              pip-audit -r "$req_file"
+            else
+              echo "Skipping $req_file (no declared packages)"
+            fi
+          }
+
+          audit_req requirements.txt
+          audit_req mvp3_tts_server/requirements.txt
+          audit_req mvp4_obs_subtitles/requirements.txt

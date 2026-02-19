@@ -1,0 +1,25 @@
+[package]
+name = "miqbot-bridge-server"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+futures-util = "0.3"
+prost = "0.12"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal"] }
+tokio-rustls = "0.24"
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+uuid = { version = "1", features = ["v4"] }
+rustls = "0.21"
+rustls-pemfile = "1"
+
+[build-dependencies]
+prost-build = "0.12"
+protoc-bin-vendored = "3"

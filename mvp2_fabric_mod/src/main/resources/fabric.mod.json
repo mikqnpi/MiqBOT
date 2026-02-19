@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "miqbot-mod",
+  "version": "${version}",
+  "name": "MiqBOT Mod",
+  "description": "MiqBOT bridge client (MVP-2)",
+  "authors": ["you"],
+  "contact": {},
+  "license": "Apache-2.0",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "io.MiqBOT.mod.MiqBOTClientMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "1.21.4",
+    "fabric-api": "*"
+  }
+}
