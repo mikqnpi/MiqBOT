@@ -33,6 +33,7 @@ jobs:
             "mvp2_fabric_mod/DOMAIN_CHARTER.md"
             "mvp3_tts_server/DOMAIN_CHARTER.md"
             "mvp4_obs_subtitles/DOMAIN_CHARTER.md"
+            "mvp5_orchestrator/DOMAIN_CHARTER.md"
             "docs/migration/mvp_to_unified.md"
             "docs/runbooks/mvp_bringup.md"
           )
@@ -65,6 +66,14 @@ jobs:
       - name: Cargo check
         run: cargo check --manifest-path mvp1_bridge_server/Cargo.toml
 
+  rust-orchestrator-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cargo check
+        run: cargo check --manifest-path mvp5_orchestrator/Cargo.toml
+
   java-fabric-build:
     runs-on: ubuntu-latest
     steps:
@@ -95,6 +104,8 @@ jobs:
         run: |
           pip install -r mvp4_obs_subtitles/requirements.txt
           python -m py_compile mvp4_obs_subtitles/obs_subtitles.py
+          python -m py_compile mvp4_obs_subtitles/obs_common.py
+          python -m py_compile mvp4_obs_subtitles/obs_gateway.py
 
   pip-audit:
     runs-on: ubuntu-latest

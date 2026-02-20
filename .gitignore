@@ -27,4 +27,8 @@ mvp2_fabric_mod/build/
 mvp2_fabric_mod/run/
 mvp3_tts_server/.venv/
 mvp4_obs_subtitles/.venv/
+mvp5_orchestrator/target/
+mvp5_orchestrator/artifacts/
+mvp5_orchestrator/mvp5_out.wav
+mvp5_orchestrator/mvp5_metrics.jsonl
 

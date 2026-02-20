@@ -1,10 +1,10 @@
-# MVP Bring-up Runbook (Windows-first)
+﻿# MVP Bring-up Runbook (Windows-first)
 
 ## Prerequisites
 - Windows 11 / PowerShell 7+
 - Python 3.11+
 - Java 21+
-- Rust toolchain (for MVP-1)
+- Rust toolchain (for MVP-1 and MVP-5)
 - OpenSSL and keytool in PATH
 - Minecraft Fabric 1.21.4 client environment
 - OBS Studio with obs-websocket v5 enabled
@@ -52,7 +52,7 @@ Run in `mvp1_bridge_server/certs`:
 6. Test:
    - `curl -X POST http://127.0.0.1:40300/v1/tts -H "Content-Type: application/json" -d "{\"text\":\"hello\",\"sample_rate_hz\":48000}" --output out.wav`
 
-## Step 5: Start MVP-4 OBS subtitles client
+## Step 5: Start MVP-4 OBS subtitle gateway
 1. In OBS, create a text input source named `MiqBOTSubtitle`.
 2. Confirm obs-websocket v5 is enabled on port 4455.
 3. `cd mvp4_obs_subtitles`
@@ -60,22 +60,36 @@ Run in `mvp1_bridge_server/certs`:
 5. `.venv\Scripts\activate`
 6. `pip install -r requirements.txt`
 7. Set `config.properties` values for OBS URL/password/input name.
-8. `python obs_subtitles.py`
-9. Enter sentence text and verify:
-   - Wrapped at 13 characters per line.
-   - Display duration is at least `visible_chars / 4` seconds.
+8. `uvicorn obs_gateway:app --host 127.0.0.1 --port 48100`
+9. Health check:
+   - `curl http://127.0.0.1:48100/healthz`
 
-## Minimal E2E validation (pre-orchestrator)
-Use one fixed sentence, for example `MiqBOT E2E check`:
-1. Send same text to MVP-3 and MVP-4.
-2. Record timestamps for:
-   - Text submit time
-   - TTS WAV response completion
-   - OBS subtitle visible time
-3. Save latency notes for merge into orchestrator phase.
+## Step 6: Start MVP-5 Orchestrator
+1. `cd mvp5_orchestrator`
+2. Confirm `config/orchestrator.toml` paths point to valid bridge cert/key/ca files.
+3. `cargo run --release`
+4. Expected behavior:
+   - Bridge telemetry is received by orchestrator.
+   - Subtitle posts are visible in OBS.
+   - TTS requests are generated.
+   - Local audio playback is attempted; fallback wav is written if playback command is unavailable.
+   - `mvp5_metrics.jsonl` gets appended with pipeline metrics.
+
+## Minimal E2E validation
+1. Verify startup order: Bridge -> Fabric -> TTS -> OBS gateway -> Orchestrator.
+2. Confirm no prolonged silence:
+   - Observe continuous subtitle/audio events with gaps generally below ~1.2s.
+3. Confirm metrics fields exist per line:
+   - `ttft_ms`
+   - `subtitle_show_s`
+   - `silence_gap_ms`
+   - `pipeline_latency_ms`
+4. Confirm bridge relay path:
+   - Fabric telemetry arrives at Bridge and is forwarded to Orchestrator.
 
 ## Integration handoff points
 - Bridge contract: `proto/MiqBOT_bridge_v1.proto`
-- Audio endpoint: `POST http://127.0.0.1:40300/v1/tts`
-- Subtitle endpoint: obs-websocket `SetInputSettings`
+- TTS endpoint: `POST http://127.0.0.1:40300/v1/tts`
+- Subtitle endpoint: `POST http://127.0.0.1:48100/v1/subtitle`
+- Health endpoint: `GET http://127.0.0.1:48100/healthz`
 - Future flow: `Bridge <-> Orchestrator <-> (TTS + OBS + TikTok)`

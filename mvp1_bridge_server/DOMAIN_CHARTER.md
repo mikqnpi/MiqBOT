@@ -20,10 +20,13 @@ Provide secure transport and canonical protocol handling for game telemetry and 
 ## Public API
 - WSS endpoint: `wss://<bind_addr>:40100`
 - Payload format: `proto/MiqBOT_bridge_v1.proto`
+- Handshake compatibility:
+  - `HelloAck` for clients advertising `CAP_HELLO_ACK_V1`
+  - legacy `Hello` reply for older clients
 
 ## Inbound / Outbound
 - Inbound: WSS binary protobuf envelopes from authenticated clients.
-- Outbound: WSS binary protobuf envelopes (`Hello`, `TimeSyncResponse`, `ErrorFrame`).
+- Outbound: WSS binary protobuf envelopes (`HelloAck`/`Hello`, relayed `TelemetryFrame`, `TimeSyncResponse`, `ErrorFrame`).
 
 ## Canonical Contract
 - Source of truth: `proto/MiqBOT_bridge_v1.proto`

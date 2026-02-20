@@ -6,6 +6,7 @@ pub struct BridgeConfig {
     pub bind_addr: String,
     pub tls: TlsConfig,
     pub limits: LimitsConfig,
+    pub relay: RelayConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -19,6 +20,13 @@ pub struct TlsConfig {
 pub struct LimitsConfig {
     pub max_ws_message_bytes: usize,
     pub hello_timeout_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RelayConfig {
+    pub allow_orchestrator_subscribe: bool,
+    pub max_orchestrator_subscribers: usize,
+    pub min_relay_interval_ms: u64,
 }
 
 impl BridgeConfig {
@@ -38,6 +46,9 @@ impl BridgeConfig {
         }
         if self.limits.hello_timeout_ms == 0 {
             bail!("hello_timeout_ms must be > 0");
+        }
+        if self.relay.max_orchestrator_subscribers == 0 {
+            bail!("max_orchestrator_subscribers must be > 0");
         }
         Ok(())
     }

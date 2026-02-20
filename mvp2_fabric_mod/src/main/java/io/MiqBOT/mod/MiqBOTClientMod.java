@@ -10,7 +10,6 @@ import java.nio.file.Path;
 
 public final class MiqBOTClientMod implements ClientModInitializer {
     private WsBridgeClient bridge;
-    private long tickCounter = 0;
 
     @Override
     public void onInitializeClient() {
@@ -37,16 +36,11 @@ public final class MiqBOTClientMod implements ClientModInitializer {
     }
 
     private void onEndClientTick(MinecraftClient client) {
-        tickCounter++;
         if (bridge == null || !bridge.isConnected()) {
             return;
         }
 
-        if ((tickCounter % 2) != 0) {
-            return;
-        }
-
         TelemetryCollector.Telemetry t = TelemetryCollector.collect(client);
-        bridge.sendTelemetry(t);
+        bridge.updateTelemetry(t);
     }
 }

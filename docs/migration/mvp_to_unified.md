@@ -6,6 +6,7 @@ This document defines the expiry plan for the temporary MVP split layout:
 - `mvp2_fabric_mod`
 - `mvp3_tts_server`
 - `mvp4_obs_subtitles`
+- `mvp5_orchestrator`
 
 ## Why the split exists
 The split allows independent bring-up and failure isolation while canonical interfaces are stabilized.
@@ -26,6 +27,7 @@ The MVP split must be removed when all conditions below are true:
 - `domains/game_client/*`
 - `domains/voice/*`
 - `domains/streaming/*`
+- `domains/orchestrator/*`
 - `contracts/proto/MiqBOT_bridge_v1.proto`
 
 ## Migration steps

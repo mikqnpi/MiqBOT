@@ -13,6 +13,7 @@ Collect Minecraft client telemetry and send it to the Bridge over secure transpo
 ## Owned Data + Invariants
 - Owns periodic sampling cadence (10Hz for MVP).
 - Maintains per-connection sequence and state version counters.
+- Uses latest-only telemetry buffering so game tick thread never blocks on network I/O.
 - Emits telemetry values normalized to contract ranges.
 
 ## Public API

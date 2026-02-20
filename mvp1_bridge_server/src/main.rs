@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(&cfg.bind_addr).await?;
     info!(bind_addr = %cfg.bind_addr, "bridge server listening");
+    let relay_hub = ws::RelayHub::new(cfg.relay.clone());
 
     loop {
         tokio::select! {
@@ -32,6 +33,7 @@ async fn main() -> Result<()> {
                 let (tcp, addr) = res?;
                 let acceptor = acceptor.clone();
                 let limits = cfg.limits.clone();
+                let relay_hub = relay_hub.clone();
 
                 tokio::spawn(async move {
                     let tls = match acceptor.accept(tcp).await {
@@ -46,6 +48,7 @@ async fn main() -> Result<()> {
                         tls,
                         limits.max_ws_message_bytes,
                         limits.hello_timeout_ms,
+                        relay_hub,
                     )
                     .await
                     {

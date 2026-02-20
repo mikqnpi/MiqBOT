@@ -1,24 +1,26 @@
-[package]
-name = "miqbot-bridge-server"
+﻿[package]
+name = "miqbot-orchestrator-mvp5"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"
-bytes = "1"
 futures-util = "0.3"
 prost = "0.12"
+reqwest = { version = "0.12", features = ["json"] }
+rustls = "0.21"
+rustls-pemfile = "1"
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net"] }
 tokio-rustls = "0.24"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 uuid = { version = "1", features = ["v4"] }
-rustls = "0.21"
-rustls-pemfile = "1"
+url = "2"
 
 [build-dependencies]
 prost-build = "0.12"

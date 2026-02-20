@@ -17,6 +17,7 @@ enum Capability {
   CAP_TELEMETRY_V1 = 1;
   CAP_ACTIONS_V1 = 2;
   CAP_TIMESYNC_V1 = 3;
+  CAP_HELLO_ACK_V1 = 4;
 }
 
 enum Dimension {
@@ -47,6 +48,7 @@ message Envelope {
 
   oneof payload {
     Hello hello = 10;
+    HelloAck hello_ack = 15;
     Heartbeat heartbeat = 11;
     TelemetryFrame telemetry = 12;
     TimeSyncRequest time_sync_req = 13;
@@ -61,10 +63,19 @@ message Envelope {
 }
 
 message Hello {
+  string handshake_id = 5;
   string agent_id = 1;
   PeerRole role = 2;
   repeated Capability capabilities = 3;
   string client_version = 4;
+}
+
+message HelloAck {
+  string handshake_id = 1;
+  bool accepted = 2;
+  string reason = 3;
+  repeated Capability negotiated_capabilities = 4;
+  string server_version = 5;
 }
 
 message Heartbeat {

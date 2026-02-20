@@ -16,7 +16,10 @@ Render sentence-based subtitles into OBS text input using obs-websocket v5.
 - Clears subtitle text after display interval.
 
 ## Public API
-- CLI process consuming stdin sentences.
+- CLI process consuming stdin sentences (`obs_subtitles.py`).
+- HTTP gateway:
+  - `POST /v1/subtitle`
+  - `GET /healthz`
 - Config file: `mvp4_obs_subtitles/config.properties`.
 
 ## Inbound / Outbound

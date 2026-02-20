@@ -1,4 +1,4 @@
-package io.MiqBOT.mod;
+﻿package io.MiqBOT.mod;
 
 import io.MiqBOT.bridge.v1.Capability;
 import io.MiqBOT.bridge.v1.Dimension;
@@ -16,21 +16,43 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class WsBridgeClient implements WebSocket.Listener {
+    private static final long SEND_INTERVAL_MS = 100L; // 10Hz latest-only sender
+
     private final String agentId;
     private final URI uri;
     private final HttpClient http;
     private final long startNano;
 
-    private volatile WebSocket ws;
-
     private final AtomicLong seq = new AtomicLong(0);
     private final AtomicLong lastPeerSeq = new AtomicLong(0);
     private final AtomicLong stateVersion = new AtomicLong(0);
+    private final AtomicReference<TelemetrySnapshot> latestSnapshot = new AtomicReference<>(null);
+    private final AtomicBoolean senderStarted = new AtomicBoolean(false);
 
+    private final ScheduledExecutorService senderExecutor;
+
+    private volatile WebSocket ws;
     private volatile String sessionId = UUID.randomUUID().toString();
+    private final String handshakeId = UUID.randomUUID().toString();
+
+    private static final class TelemetrySnapshot {
+        final TelemetryCollector.Telemetry telemetry;
+        final long stateVersion;
+
+        TelemetrySnapshot(TelemetryCollector.Telemetry telemetry, long stateVersion) {
+            this.telemetry = telemetry;
+            this.stateVersion = stateVersion;
+        }
+    }
 
     public WsBridgeClient(String agentId, String bridgeUrl, SSLContext sslContext) {
         this.agentId = agentId;
@@ -40,6 +62,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
         this.startNano = System.nanoTime();
+        this.senderExecutor = Executors.newSingleThreadScheduledExecutor(new SenderThreadFactory());
     }
 
     public void connect() {
@@ -47,6 +70,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 .buildAsync(this.uri, this)
                 .thenAccept(webSocket -> {
                     this.ws = webSocket;
+                    startSenderLoop();
                     sendHello();
                 })
                 .exceptionally(ex -> {
@@ -60,15 +84,41 @@ public final class WsBridgeClient implements WebSocket.Listener {
         return this.ws != null;
     }
 
-    public void sendTelemetry(TelemetryCollector.Telemetry t) {
-        if (this.ws == null) {
+    public void updateTelemetry(TelemetryCollector.Telemetry t) {
+        long version = stateVersion.incrementAndGet();
+        TelemetryCollector.Telemetry copy = copyTelemetry(t);
+        latestSnapshot.set(new TelemetrySnapshot(copy, version));
+    }
+
+    private void startSenderLoop() {
+        if (!senderStarted.compareAndSet(false, true)) {
             return;
         }
 
-        long sv = stateVersion.incrementAndGet();
+        senderExecutor.scheduleAtFixedRate(() -> {
+            try {
+                sendLatestTelemetry();
+            } catch (Exception e) {
+                System.out.println("[MiqBOT] sender loop error: " + e);
+                e.printStackTrace();
+            }
+        }, SEND_INTERVAL_MS, SEND_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
 
+    private void sendLatestTelemetry() {
+        WebSocket webSocket = this.ws;
+        if (webSocket == null) {
+            return;
+        }
+
+        TelemetrySnapshot snapshot = latestSnapshot.getAndSet(null);
+        if (snapshot == null) {
+            return;
+        }
+
+        TelemetryCollector.Telemetry t = snapshot.telemetry;
         TelemetryFrame tf = TelemetryFrame.newBuilder()
-                .setStateVersion(sv)
+                .setStateVersion(snapshot.stateVersion)
                 .setWorldTick(t.worldTick)
                 .setDimension(mapDimensionEnum(t.dimension))
                 .setPos(Vec3d.newBuilder().setX(t.x).setY(t.y).setZ(t.z).build())
@@ -95,7 +145,9 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 .setRole(PeerRole.PEER_ROLE_GAME_CLIENT)
                 .addCapabilities(Capability.CAP_TELEMETRY_V1)
                 .addCapabilities(Capability.CAP_TIMESYNC_V1)
-                .setClientVersion("MiqBOT-mod/0.1.0")
+                .addCapabilities(Capability.CAP_HELLO_ACK_V1)
+                .setClientVersion("MiqBOT-mod/0.2.0")
+                .setHandshakeId(this.handshakeId)
                 .build();
 
         Envelope env = baseEnvelopeBuilder()
@@ -117,11 +169,18 @@ public final class WsBridgeClient implements WebSocket.Listener {
     }
 
     private void send(Envelope env) {
-        if (this.ws == null) {
+        WebSocket webSocket = this.ws;
+        if (webSocket == null) {
             return;
         }
-        byte[] bytes = env.toByteArray();
-        this.ws.sendBinary(ByteBuffer.wrap(bytes), true);
+
+        try {
+            byte[] bytes = env.toByteArray();
+            webSocket.sendBinary(ByteBuffer.wrap(bytes), true);
+        } catch (Exception e) {
+            System.out.println("[MiqBOT] WS send error: " + e);
+            e.printStackTrace();
+        }
     }
 
     private long monoMs() {
@@ -144,6 +203,24 @@ public final class WsBridgeClient implements WebSocket.Listener {
         return Dimension.DIMENSION_UNSPECIFIED;
     }
 
+    private static TelemetryCollector.Telemetry copyTelemetry(TelemetryCollector.Telemetry t) {
+        TelemetryCollector.Telemetry copy = new TelemetryCollector.Telemetry();
+        copy.worldTick = t.worldTick;
+        copy.dimension = t.dimension;
+        copy.x = t.x;
+        copy.y = t.y;
+        copy.z = t.z;
+        copy.yawDeg = t.yawDeg;
+        copy.pitchDeg = t.pitchDeg;
+        copy.hp = t.hp;
+        copy.hunger = t.hunger;
+        copy.air = t.air;
+        copy.sprinting = t.sprinting;
+        copy.sneaking = t.sneaking;
+        copy.onGround = t.onGround;
+        return copy;
+    }
+
     @Override
     public void onOpen(WebSocket webSocket) {
         WebSocket.Listener.super.onOpen(webSocket);
@@ -160,8 +237,11 @@ public final class WsBridgeClient implements WebSocket.Listener {
             Envelope env = Envelope.parseFrom(bytes);
             lastPeerSeq.set(env.getSeq());
 
-            if (env.hasHello()) {
-                System.out.println("[MiqBOT] server hello: " + env.getHello().getClientVersion());
+            if (env.hasHelloAck()) {
+                var ack = env.getHelloAck();
+                System.out.println("[MiqBOT] hello_ack accepted=" + ack.getAccepted() + " reason=" + ack.getReason());
+            } else if (env.hasHello()) {
+                System.out.println("[MiqBOT] server hello (legacy): " + env.getHello().getClientVersion());
             }
         } catch (Exception e) {
             System.out.println("[MiqBOT] WS decode error: " + e);
@@ -189,5 +269,14 @@ public final class WsBridgeClient implements WebSocket.Listener {
         System.out.println("[MiqBOT] WS close: " + statusCode + " reason=" + reason);
         this.ws = null;
         return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
+    }
+
+    private static final class SenderThreadFactory implements ThreadFactory {
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "MiqBOT-telemetry-sender");
+            t.setDaemon(true);
+            return t;
+        }
     }
 }

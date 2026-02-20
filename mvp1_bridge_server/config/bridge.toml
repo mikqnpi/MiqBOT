@@ -8,3 +8,8 @@ hello_timeout_ms = 5000
 server_cert_pem = "certs/server.crt.pem"
 server_key_pem = "certs/server.key.pem"
 client_ca_cert_pem = "certs/ca.crt.pem"
+
+[relay]
+allow_orchestrator_subscribe = true
+max_orchestrator_subscribers = 4
+min_relay_interval_ms = 50

@@ -1,0 +1,19 @@
+﻿bridge_url = "wss://127.0.0.1:40100"
+agent_id = "orchestrator"
+client_version = "miqbot-orchestrator-mvp5/0.1.0"
+
+tts_url = "http://127.0.0.1:40300"
+subtitle_url = "http://127.0.0.1:48100"
+
+silence_gap_ms = 1200
+loop_sleep_ms = 100
+duplicate_cooldown_ms = 900
+
+audio_output_dir = "artifacts/audio"
+fallback_wav_path = "mvp5_out.wav"
+metrics_jsonl_path = "mvp5_metrics.jsonl"
+
+[tls]
+client_cert_pem = "../mvp1_bridge_server/certs/client.crt.pem"
+client_key_pem = "../mvp1_bridge_server/certs/client.key.pem"
+ca_cert_pem = "../mvp1_bridge_server/certs/ca.crt.pem"
