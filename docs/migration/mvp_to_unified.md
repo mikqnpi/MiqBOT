@@ -43,3 +43,10 @@ The MVP split must be removed when all conditions below are true:
 
 ## Notes
 Any extension to this temporary layout requires explicit review and update of this document.
+
+## MVP-5 stabilization tasks (P0)
+- Task group: `MIQBOT-UNIFY-001-P0`
+- Added in MVP-5 phase to reduce integration risk before unified move:
+  1. Bridge relay websocket send timeout (`send_timeout_ms`) to prevent stuck orchestrator relay sessions.
+  2. HelloAck capability negotiation by intersection and server-owned handshake id policy.
+  3. OBS subtitle gateway generation-based clear ordering to prevent stale clear races.

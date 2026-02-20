@@ -87,6 +87,17 @@ Run in `mvp1_bridge_server/certs`:
 4. Confirm bridge relay path:
    - Fabric telemetry arrives at Bridge and is forwarded to Orchestrator.
 
+## MVP-5 P0 stabilization notes
+- Bridge send timeout:
+  - `mvp1_bridge_server/config/bridge.toml` -> `[limits].send_timeout_ms` (default `1000`).
+  - If downstream websocket send blocks past timeout, bridge session is closed to avoid stuck relay tasks.
+- HelloAck capability negotiation:
+  - `HelloAck.negotiated_capabilities` is server/client intersection, not a fixed capability list.
+  - Bridge ignores client-provided `Hello.handshake_id` and returns a server-owned handshake id.
+- OBS subtitle clear ordering:
+  - Gateway uses generation checks for clear tasks.
+  - On rapid consecutive subtitle posts, old clear tasks must not clear newer subtitle text.
+
 ## Integration handoff points
 - Bridge contract: `proto/MiqBOT_bridge_v1.proto`
 - TTS endpoint: `POST http://127.0.0.1:40300/v1/tts`

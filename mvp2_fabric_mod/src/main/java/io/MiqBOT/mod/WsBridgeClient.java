@@ -37,6 +37,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
     private final AtomicLong stateVersion = new AtomicLong(0);
     private final AtomicReference<TelemetrySnapshot> latestSnapshot = new AtomicReference<>(null);
     private final AtomicBoolean senderStarted = new AtomicBoolean(false);
+    private final AtomicBoolean sendInFlight = new AtomicBoolean(false);
 
     private final ScheduledExecutorService senderExecutor;
 
@@ -110,9 +111,16 @@ public final class WsBridgeClient implements WebSocket.Listener {
         if (webSocket == null) {
             return;
         }
+        if (sendInFlight.get()) {
+            return;
+        }
 
         TelemetrySnapshot snapshot = latestSnapshot.getAndSet(null);
         if (snapshot == null) {
+            return;
+        }
+        if (!sendInFlight.compareAndSet(false, true)) {
+            latestSnapshot.compareAndSet(null, snapshot);
             return;
         }
 
@@ -136,7 +144,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 .setTelemetry(tf)
                 .build();
 
-        send(env);
+        sendTelemetry(webSocket, env);
     }
 
     private void sendHello() {
@@ -179,6 +187,24 @@ public final class WsBridgeClient implements WebSocket.Listener {
             webSocket.sendBinary(ByteBuffer.wrap(bytes), true);
         } catch (Exception e) {
             System.out.println("[MiqBOT] WS send error: " + e);
+            e.printStackTrace();
+        }
+    }
+
+    private void sendTelemetry(WebSocket webSocket, Envelope env) {
+        try {
+            byte[] bytes = env.toByteArray();
+            webSocket.sendBinary(ByteBuffer.wrap(bytes), true)
+                    .whenComplete((ignored, error) -> {
+                        sendInFlight.set(false);
+                        if (error != null) {
+                            System.out.println("[MiqBOT] WS telemetry send error: " + error);
+                            error.printStackTrace();
+                        }
+                    });
+        } catch (Exception e) {
+            sendInFlight.set(false);
+            System.out.println("[MiqBOT] WS telemetry send exception: " + e);
             e.printStackTrace();
         }
     }
@@ -268,6 +294,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
     public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
         System.out.println("[MiqBOT] WS close: " + statusCode + " reason=" + reason);
         this.ws = null;
+        sendInFlight.set(false);
         return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
     }
 

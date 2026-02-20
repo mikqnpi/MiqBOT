@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
                         tls,
                         limits.max_ws_message_bytes,
                         limits.hello_timeout_ms,
+                        limits.send_timeout_ms,
                         relay_hub,
                     )
                     .await

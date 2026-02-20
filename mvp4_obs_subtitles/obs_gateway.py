@@ -22,6 +22,7 @@ class GatewayState:
     line_max: int = 13
     min_sec_per_char: float = 0.25
     request_seq: int = 0
+    generation: int = 0
     clear_task: Optional[asyncio.Task] = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -71,12 +72,16 @@ async def post_subtitle(req: SubtitleReq) -> JSONResponse:
     async with state.lock:
         state.request_seq += 1
         request_id = f"sub-{state.request_seq}"
+        state.generation += 1
+        generation = state.generation
 
         if state.clear_task and not state.clear_task.done():
             state.clear_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.clear_task
 
         await state.obs.set_text_input(state.input_name, wrapped)
-        state.clear_task = asyncio.create_task(_clear_after(state.obs, state.input_name, show_s, request_id))
+        state.clear_task = asyncio.create_task(_clear_after(show_s, request_id, generation))
 
     return JSONResponse(
         {
@@ -89,10 +94,15 @@ async def post_subtitle(req: SubtitleReq) -> JSONResponse:
     )
 
 
-async def _clear_after(obs: ObsClient, input_name: str, show_s: float, request_id: str) -> None:
+async def _clear_after(show_s: float, request_id: str, generation: int) -> None:
     try:
         await asyncio.sleep(show_s)
-        await obs.set_text_input(input_name, "")
+        async with state.lock:
+            if generation != state.generation:
+                return
+            if state.obs is None:
+                return
+            await state.obs.set_text_input(state.input_name, "")
     except asyncio.CancelledError:
         return
     except (RuntimeError, ValueError, OSError) as exc:

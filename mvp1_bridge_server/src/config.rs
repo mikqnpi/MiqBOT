@@ -20,6 +20,7 @@ pub struct TlsConfig {
 pub struct LimitsConfig {
     pub max_ws_message_bytes: usize,
     pub hello_timeout_ms: u64,
+    pub send_timeout_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,6 +47,9 @@ impl BridgeConfig {
         }
         if self.limits.hello_timeout_ms == 0 {
             bail!("hello_timeout_ms must be > 0");
+        }
+        if self.limits.send_timeout_ms == 0 {
+            bail!("send_timeout_ms must be > 0");
         }
         if self.relay.max_orchestrator_subscribers == 0 {
             bail!("max_orchestrator_subscribers must be > 0");

@@ -15,6 +15,11 @@ use crate::config::RelayConfig;
 use crate::pb::bridge_v1 as pb;
 
 const PROTOCOL_VERSION: u32 = 1;
+const SERVER_NEGOTIABLE_CAPABILITIES: [i32; 3] = [
+    pb::Capability::CapTelemetryV1 as i32,
+    pb::Capability::CapTimesyncV1 as i32,
+    pb::Capability::CapHelloAckV1 as i32,
+];
 
 #[derive(Debug)]
 pub enum OrchestratorAcquireError {
@@ -105,10 +110,11 @@ pub struct SessionState {
     pub agent_id: Option<String>,
     pub peer_role: pb::PeerRole,
     pub peer_caps: Vec<i32>,
+    pub send_timeout_ms: u64,
 }
 
 impl SessionState {
-    pub fn new() -> Self {
+    pub fn new(send_timeout_ms: u64) -> Self {
         Self {
             session_id: Uuid::new_v4().to_string(),
             server_seq: 0,
@@ -116,6 +122,7 @@ impl SessionState {
             agent_id: None,
             peer_role: pb::PeerRole::PeerRoleUnspecified,
             peer_caps: Vec::new(),
+            send_timeout_ms,
         }
     }
 
@@ -130,6 +137,7 @@ pub async fn run_ws_session(
     tls_stream: TlsStream<TcpStream>,
     max_ws_message_bytes: usize,
     hello_timeout_ms: u64,
+    send_timeout_ms: u64,
     relay_hub: Arc<RelayHub>,
 ) -> Result<()> {
     let ws_cfg = WebSocketConfig {
@@ -143,7 +151,7 @@ pub async fn run_ws_session(
         .await
         .context("websocket accept")?;
 
-    let mut st = SessionState::new();
+    let mut st = SessionState::new(send_timeout_ms);
     info!(session_id = %st.session_id, "ws connected");
 
     let hello_msg = tokio::time::timeout(std::time::Duration::from_millis(hello_timeout_ms), ws.next())
@@ -202,11 +210,14 @@ pub async fn run_ws_session(
     st.peer_role = pb::PeerRole::from_i32(hello.role).unwrap_or(pb::PeerRole::PeerRoleUnspecified);
 
     let supports_hello_ack = st.supports_hello_ack();
-    let handshake_id = if hello.handshake_id.trim().is_empty() {
-        Uuid::new_v4().to_string()
-    } else {
-        hello.handshake_id.clone()
-    };
+    if !hello.handshake_id.trim().is_empty() {
+        warn!(
+            agent_id = %hello.agent_id,
+            client_handshake_id = %hello.handshake_id,
+            "ignored client handshake_id; bridge enforces server-side handshake_id"
+        );
+    }
+    let handshake_id = st.session_id.clone();
 
     info!(
         agent_id = %hello.agent_id,
@@ -442,15 +453,12 @@ async fn send_handshake_ok(
     handshake_id: &str,
 ) -> Result<()> {
     if use_hello_ack {
+        let negotiated = negotiated_capabilities(&st.peer_caps);
         let ack = pb::HelloAck {
             handshake_id: handshake_id.to_string(),
             accepted: true,
             reason: "ok".to_string(),
-            negotiated_capabilities: vec![
-                pb::Capability::CapTelemetryV1 as i32,
-                pb::Capability::CapTimesyncV1 as i32,
-                pb::Capability::CapHelloAckV1 as i32,
-            ],
+            negotiated_capabilities: negotiated,
             server_version: "miqbot-bridge-server/0.2.0".to_string(),
         };
         send_envelope(ws, st, pb::envelope::Payload::HelloAck(ack)).await
@@ -467,6 +475,14 @@ async fn send_handshake_ok(
         };
         send_envelope(ws, st, pb::envelope::Payload::Hello(reply)).await
     }
+}
+
+fn negotiated_capabilities(peer_caps: &[i32]) -> Vec<i32> {
+    SERVER_NEGOTIABLE_CAPABILITIES
+        .iter()
+        .copied()
+        .filter(|cap| peer_caps.contains(cap))
+        .collect()
 }
 
 async fn send_handshake_reject(
@@ -530,7 +546,19 @@ async fn send_envelope(
 
     let mut buf = Vec::with_capacity(env.encoded_len());
     env.encode(&mut buf).context("encode env")?;
-    ws.send(WsMessage::Binary(buf)).await.context("ws send")?;
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(st.send_timeout_ms),
+        ws.send(WsMessage::Binary(buf)),
+    )
+    .await
+    {
+        Ok(send_result) => {
+            send_result.context("ws send")?;
+        }
+        Err(_) => {
+            anyhow::bail!("ws send timeout after {}ms", st.send_timeout_ms);
+        }
+    }
     Ok(())
 }
 
