@@ -28,6 +28,9 @@ pub struct RelayConfig {
     pub allow_orchestrator_subscribe: bool,
     pub max_orchestrator_subscribers: usize,
     pub min_relay_interval_ms: u64,
+    pub primary_game_agent_id: String,
+    pub action_queue_size: usize,
+    pub action_send_timeout_ms: u64,
 }
 
 impl BridgeConfig {
@@ -53,6 +56,15 @@ impl BridgeConfig {
         }
         if self.relay.max_orchestrator_subscribers == 0 {
             bail!("max_orchestrator_subscribers must be > 0");
+        }
+        if self.relay.primary_game_agent_id.trim().is_empty() {
+            bail!("primary_game_agent_id must not be empty");
+        }
+        if self.relay.action_queue_size == 0 {
+            bail!("action_queue_size must be > 0");
+        }
+        if self.relay.action_send_timeout_ms == 0 {
+            bail!("action_send_timeout_ms must be > 0");
         }
         Ok(())
     }

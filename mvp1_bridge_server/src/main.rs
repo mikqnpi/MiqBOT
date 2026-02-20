@@ -1,5 +1,6 @@
 mod config;
 mod pb;
+mod relay;
 mod tls;
 mod ws;
 
@@ -25,7 +26,7 @@ async fn main() -> Result<()> {
 
     let listener = TcpListener::bind(&cfg.bind_addr).await?;
     info!(bind_addr = %cfg.bind_addr, "bridge server listening");
-    let relay_hub = ws::RelayHub::new(cfg.relay.clone());
+    let relay_hub = relay::RelayHub::new(cfg.relay.clone());
 
     loop {
         tokio::select! {

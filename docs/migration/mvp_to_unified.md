@@ -41,6 +41,20 @@ The MVP split must be removed when all conditions below are true:
 - End-to-end smoke run completed on Windows.
 - No duplicate contract definitions remain.
 
+## MVP-6 to MVP-9 completion criteria
+1. MVP-6 complete:
+   - Orchestrator runs with StateActor single-writer state ownership.
+   - SpeechQueue priority/deadline behavior is observable in metrics JSONL.
+2. MVP-7 complete:
+   - Action relay via Bridge works with TTL/idempotency/target fields.
+   - Action terminal outcomes are always emitted (`ActionResult`).
+3. MVP-8 complete:
+   - Action allowlist is enforced in Fabric executor.
+   - Baritone goto path is gated and safe-fail behavior is verified.
+4. MVP-9 complete:
+   - TTS engine mode switching and `/v1/tts_with_meta` are stable.
+   - Variant benchmark output exists for adoption decision.
+
 ## Notes
 Any extension to this temporary layout requires explicit review and update of this document.
 

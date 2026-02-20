@@ -3,6 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
   repo-gates:
@@ -73,6 +76,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Cargo check
         run: cargo check --manifest-path mvp5_orchestrator/Cargo.toml
+      - name: Cargo test
+        run: cargo test --manifest-path mvp5_orchestrator/Cargo.toml -- --nocapture
 
   java-fabric-build:
     runs-on: ubuntu-latest
@@ -100,6 +105,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r mvp3_tts_server/requirements.txt
           python -m py_compile mvp3_tts_server/server.py
+          python -m py_compile mvp3_tts_server/bench_variants.py
       - name: Validate MVP-4 package
         run: |
           pip install -r mvp4_obs_subtitles/requirements.txt
@@ -136,3 +142,14 @@ jobs:
           audit_req requirements.txt
           audit_req mvp3_tts_server/requirements.txt
           audit_req mvp4_obs_subtitles/requirements.txt
+
+  nightly-action-integration:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bridge action flow tests
+        run: cargo test --manifest-path mvp1_bridge_server/Cargo.toml -- --nocapture
+      - name: Orchestrator state/action tests
+        run: cargo test --manifest-path mvp5_orchestrator/Cargo.toml -- --nocapture

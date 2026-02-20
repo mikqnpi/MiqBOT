@@ -123,6 +123,7 @@ enum ActionType {
   ACTION_TYPE_UNSPECIFIED = 0;
   ACTION_TYPE_STOP_ALL = 1;
   ACTION_TYPE_MOVE_VEC = 2;
+  ACTION_TYPE_BARITONE_GOTO = 3;
 }
 
 message MoveVec {
@@ -133,12 +134,25 @@ message MoveVec {
   uint32 duration_ms = 5;
 }
 
+message BaritoneGoto {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  uint32 max_distance = 4;
+  uint32 timeout_ms = 5;
+  uint32 stuck_timeout_ms = 6;
+}
+
 message ActionRequest {
   string request_id = 1;
   uint64 expected_state_version = 2;
   ActionType type = 3;
+  uint64 expires_at_unix_ms = 4;
+  string idempotency_key = 5;
+  string target_agent_id = 6;
 
   MoveVec move = 10;
+  BaritoneGoto baritone_goto = 11;
 }
 
 message ActionAck {
@@ -153,6 +167,7 @@ enum ActionStatus {
   ACTION_STATUS_REJECTED = 2;
   ACTION_STATUS_TIMEOUT = 3;
   ACTION_STATUS_FAILED = 4;
+  ACTION_STATUS_CANCELLED = 5;
 }
 
 message ActionResult {

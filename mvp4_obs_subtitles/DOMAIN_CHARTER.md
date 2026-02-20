@@ -14,6 +14,7 @@ Render sentence-based subtitles into OBS text input using obs-websocket v5.
 - Applies line wrap limit (default 13 chars/line).
 - Applies minimum visibility duration (`chars * 0.25 sec`).
 - Clears subtitle text after display interval.
+- Uses generation ordering so stale clear tasks never erase newer subtitles.
 
 ## Public API
 - CLI process consuming stdin sentences (`obs_subtitles.py`).

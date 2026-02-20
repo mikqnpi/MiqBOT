@@ -1,4 +1,4 @@
-﻿use crate::config::TlsConfig;
+use crate::config::TlsConfig;
 use crate::pb::bridge_v1 as pb;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -9,16 +9,24 @@ use std::io::BufReader;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
-use tokio_tungstenite::WebSocketStream;
+use tokio_rustls::TlsConnector;
 use tokio_tungstenite::client_async;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+use tokio_tungstenite::WebSocketStream;
 use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
 
 const PROTOCOL_VERSION: u32 = 1;
+
+pub enum BridgeEvent {
+    Telemetry(pb::TelemetryFrame),
+    ActionAck(pb::ActionAck),
+    ActionResult(pb::ActionResult),
+    Heartbeat(pb::Heartbeat),
+    Closed,
+}
 
 pub struct BridgeClient {
     ws: WebSocketStream<TlsStream<TcpStream>>,
@@ -63,15 +71,14 @@ impl BridgeClient {
 
         client.send_hello(agent_id, client_version).await?;
         client.wait_for_handshake().await?;
-
         Ok(client)
     }
 
-    pub async fn next_telemetry(&mut self) -> Result<Option<pb::TelemetryFrame>> {
+    pub async fn next_event(&mut self) -> Result<BridgeEvent> {
         while let Some(msg) = self.ws.next().await {
             let msg = msg.context("ws read")?;
             if msg.is_close() {
-                return Ok(None);
+                return Ok(BridgeEvent::Closed);
             }
             if !msg.is_binary() {
                 continue;
@@ -81,15 +88,12 @@ impl BridgeClient {
             self.last_peer_seq = env.seq;
 
             match env.payload {
-                Some(pb::envelope::Payload::Telemetry(t)) => return Ok(Some(t)),
-                Some(pb::envelope::Payload::Heartbeat(hb)) => {
-                    info!(
-                        rx = hb.rx_queue_len,
-                        tx = hb.tx_queue_len,
-                        dropped = hb.dropped_frames,
-                        "bridge heartbeat"
-                    );
+                Some(pb::envelope::Payload::Telemetry(t)) => return Ok(BridgeEvent::Telemetry(t)),
+                Some(pb::envelope::Payload::ActionAck(ack)) => return Ok(BridgeEvent::ActionAck(ack)),
+                Some(pb::envelope::Payload::ActionRes(result)) => {
+                    return Ok(BridgeEvent::ActionResult(result));
                 }
+                Some(pb::envelope::Payload::Heartbeat(hb)) => return Ok(BridgeEvent::Heartbeat(hb)),
                 Some(pb::envelope::Payload::HelloAck(ack)) => {
                     if !ack.accepted {
                         anyhow::bail!("bridge rejected hello: {}", ack.reason);
@@ -113,7 +117,11 @@ impl BridgeClient {
             }
         }
 
-        Ok(None)
+        Ok(BridgeEvent::Closed)
+    }
+
+    pub async fn send_action_request(&mut self, req: pb::ActionRequest) -> Result<()> {
+        self.send_envelope(pb::envelope::Payload::ActionReq(req)).await
     }
 
     async fn send_hello(&mut self, agent_id: &str, client_version: &str) -> Result<()> {
@@ -123,6 +131,7 @@ impl BridgeClient {
             capabilities: vec![
                 pb::Capability::CapTelemetryV1 as i32,
                 pb::Capability::CapTimesyncV1 as i32,
+                pb::Capability::CapActionsV1 as i32,
                 pb::Capability::CapHelloAckV1 as i32,
             ],
             client_version: client_version.to_string(),

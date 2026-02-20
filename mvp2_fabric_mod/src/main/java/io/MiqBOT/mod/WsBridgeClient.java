@@ -1,5 +1,9 @@
-﻿package io.MiqBOT.mod;
+package io.MiqBOT.mod;
 
+import io.MiqBOT.bridge.v1.ActionAck;
+import io.MiqBOT.bridge.v1.ActionRequest;
+import io.MiqBOT.bridge.v1.ActionResult;
+import io.MiqBOT.bridge.v1.ActionStatus;
 import io.MiqBOT.bridge.v1.Capability;
 import io.MiqBOT.bridge.v1.Dimension;
 import io.MiqBOT.bridge.v1.Envelope;
@@ -40,6 +44,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
     private final AtomicBoolean sendInFlight = new AtomicBoolean(false);
 
     private final ScheduledExecutorService senderExecutor;
+    private final ActionExecutor actionExecutor;
 
     private volatile WebSocket ws;
     private volatile String sessionId = UUID.randomUUID().toString();
@@ -64,6 +69,7 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 .build();
         this.startNano = System.nanoTime();
         this.senderExecutor = Executors.newSingleThreadScheduledExecutor(new SenderThreadFactory());
+        this.actionExecutor = new ActionExecutor(this.agentId, this);
     }
 
     public void connect() {
@@ -85,10 +91,35 @@ public final class WsBridgeClient implements WebSocket.Listener {
         return this.ws != null;
     }
 
+    public long currentStateVersion() {
+        return stateVersion.get();
+    }
+
     public void updateTelemetry(TelemetryCollector.Telemetry t) {
         long version = stateVersion.incrementAndGet();
         TelemetryCollector.Telemetry copy = copyTelemetry(t);
         latestSnapshot.set(new TelemetrySnapshot(copy, version));
+    }
+
+    void sendActionAck(String requestId, boolean accepted, String reason) {
+        ActionAck ack = ActionAck.newBuilder()
+                .setRequestId(requestId)
+                .setAccepted(accepted)
+                .setReason(reason)
+                .build();
+        Envelope env = baseEnvelopeBuilder().setActionAck(ack).build();
+        send(env);
+    }
+
+    void sendActionResult(String requestId, ActionStatus status, String detail) {
+        ActionResult res = ActionResult.newBuilder()
+                .setRequestId(requestId)
+                .setStatus(status)
+                .setDetail(detail)
+                .setFinalStateVersion(currentStateVersion())
+                .build();
+        Envelope env = baseEnvelopeBuilder().setActionRes(res).build();
+        send(env);
     }
 
     private void startSenderLoop() {
@@ -153,8 +184,9 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 .setRole(PeerRole.PEER_ROLE_GAME_CLIENT)
                 .addCapabilities(Capability.CAP_TELEMETRY_V1)
                 .addCapabilities(Capability.CAP_TIMESYNC_V1)
+                .addCapabilities(Capability.CAP_ACTIONS_V1)
                 .addCapabilities(Capability.CAP_HELLO_ACK_V1)
-                .setClientVersion("MiqBOT-mod/0.2.0")
+                .setClientVersion("MiqBOT-mod/0.3.0")
                 .setHandshakeId(this.handshakeId)
                 .build();
 
@@ -268,6 +300,17 @@ public final class WsBridgeClient implements WebSocket.Listener {
                 System.out.println("[MiqBOT] hello_ack accepted=" + ack.getAccepted() + " reason=" + ack.getReason());
             } else if (env.hasHello()) {
                 System.out.println("[MiqBOT] server hello (legacy): " + env.getHello().getClientVersion());
+            } else if (env.hasActionReq()) {
+                ActionRequest req = env.getActionReq();
+                actionExecutor.handleAction(req);
+            } else if (env.hasActionAck()) {
+                System.out.println("[MiqBOT] action ack request_id=" + env.getActionAck().getRequestId()
+                        + " accepted=" + env.getActionAck().getAccepted()
+                        + " reason=" + env.getActionAck().getReason());
+            } else if (env.hasActionRes()) {
+                System.out.println("[MiqBOT] action result request_id=" + env.getActionRes().getRequestId()
+                        + " status=" + env.getActionRes().getStatus()
+                        + " detail=" + env.getActionRes().getDetail());
             }
         } catch (Exception e) {
             System.out.println("[MiqBOT] WS decode error: " + e);
@@ -295,6 +338,8 @@ public final class WsBridgeClient implements WebSocket.Listener {
         System.out.println("[MiqBOT] WS close: " + statusCode + " reason=" + reason);
         this.ws = null;
         sendInFlight.set(false);
+        senderExecutor.shutdownNow();
+        actionExecutor.shutdown();
         return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
     }
 

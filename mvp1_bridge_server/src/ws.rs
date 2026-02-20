@@ -1,107 +1,25 @@
-﻿use anyhow::{Context, Result};
+use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use prost::Message;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio_rustls::server::TlsStream;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{accept_async_with_config, tungstenite::protocol::Message as WsMessage};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::config::RelayConfig;
 use crate::pb::bridge_v1 as pb;
+use crate::relay::{ActionRelayFrame, OrchestratorAcquireError, RelayHub};
 
 const PROTOCOL_VERSION: u32 = 1;
-const SERVER_NEGOTIABLE_CAPABILITIES: [i32; 3] = [
+const SERVER_NEGOTIABLE_CAPABILITIES: [i32; 4] = [
     pb::Capability::CapTelemetryV1 as i32,
     pb::Capability::CapTimesyncV1 as i32,
+    pb::Capability::CapActionsV1 as i32,
     pb::Capability::CapHelloAckV1 as i32,
 ];
-
-#[derive(Debug)]
-pub enum OrchestratorAcquireError {
-    NotAllowed,
-    LimitReached,
-}
-
-pub struct RelayHub {
-    relay_cfg: RelayConfig,
-    telemetry_tx: watch::Sender<Option<pb::TelemetryFrame>>,
-    orchestrator_count: AtomicUsize,
-    last_relay_mono_ms: AtomicU64,
-}
-
-impl RelayHub {
-    pub fn new(relay_cfg: RelayConfig) -> Arc<Self> {
-        let (telemetry_tx, _rx) = watch::channel(None);
-        Arc::new(Self {
-            relay_cfg,
-            telemetry_tx,
-            orchestrator_count: AtomicUsize::new(0),
-            last_relay_mono_ms: AtomicU64::new(0),
-        })
-    }
-
-    pub fn subscribe_telemetry(&self) -> watch::Receiver<Option<pb::TelemetryFrame>> {
-        self.telemetry_tx.subscribe()
-    }
-
-    pub fn publish_telemetry(&self, telemetry: &pb::TelemetryFrame) {
-        if self.relay_cfg.min_relay_interval_ms > 0 {
-            let now = mono_ms();
-            let last = self.last_relay_mono_ms.load(Ordering::Relaxed);
-            if now.saturating_sub(last) < self.relay_cfg.min_relay_interval_ms {
-                return;
-            }
-            self.last_relay_mono_ms.store(now, Ordering::Relaxed);
-        }
-
-        self.telemetry_tx.send_replace(Some(telemetry.clone()));
-    }
-
-    pub fn acquire_orchestrator_slot(
-        self: &Arc<Self>,
-    ) -> std::result::Result<OrchestratorSlot, OrchestratorAcquireError> {
-        if !self.relay_cfg.allow_orchestrator_subscribe {
-            return Err(OrchestratorAcquireError::NotAllowed);
-        }
-
-        loop {
-            let current = self.orchestrator_count.load(Ordering::Relaxed);
-            if current >= self.relay_cfg.max_orchestrator_subscribers {
-                return Err(OrchestratorAcquireError::LimitReached);
-            }
-
-            if self
-                .orchestrator_count
-                .compare_exchange(
-                    current,
-                    current + 1,
-                    Ordering::SeqCst,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                return Ok(OrchestratorSlot {
-                    hub: Arc::clone(self),
-                });
-            }
-        }
-    }
-}
-
-pub struct OrchestratorSlot {
-    hub: Arc<RelayHub>,
-}
-
-impl Drop for OrchestratorSlot {
-    fn drop(&mut self) {
-        self.hub.orchestrator_count.fetch_sub(1, Ordering::SeqCst);
-    }
-}
 
 pub struct SessionState {
     pub session_id: String,
@@ -111,6 +29,7 @@ pub struct SessionState {
     pub peer_role: pb::PeerRole,
     pub peer_caps: Vec<i32>,
     pub send_timeout_ms: u64,
+    pub is_primary_game: bool,
 }
 
 impl SessionState {
@@ -123,6 +42,7 @@ impl SessionState {
             peer_role: pb::PeerRole::PeerRoleUnspecified,
             peer_caps: Vec::new(),
             send_timeout_ms,
+            is_primary_game: false,
         }
     }
 
@@ -154,12 +74,28 @@ pub async fn run_ws_session(
     let mut st = SessionState::new(send_timeout_ms);
     info!(session_id = %st.session_id, "ws connected");
 
-    let hello_msg = tokio::time::timeout(std::time::Duration::from_millis(hello_timeout_ms), ws.next())
-        .await
-        .context("hello timeout")?
-        .transpose()
-        .context("ws read")?
-        .ok_or_else(|| anyhow::anyhow!("ws closed before hello"))?;
+    let hello_msg = match tokio::time::timeout(
+        std::time::Duration::from_millis(hello_timeout_ms),
+        ws.next(),
+    )
+    .await
+    {
+        Ok(msg) => msg
+            .transpose()
+            .context("ws read")?
+            .ok_or_else(|| anyhow::anyhow!("ws closed before hello"))?,
+        Err(_) => {
+            send_error(
+                &mut ws,
+                &mut st,
+                pb::ErrorCode::ErrorCodeTimeout,
+                "hello timeout",
+                "hello-timeout",
+            )
+            .await?;
+            anyhow::bail!("hello timeout");
+        }
+    };
 
     let hello_env = match decode_envelope(hello_msg) {
         Ok(v) => v,
@@ -177,7 +113,6 @@ pub async fn run_ws_session(
     };
 
     st.last_peer_seq = hello_env.seq;
-
     if hello_env.protocol_version != PROTOCOL_VERSION {
         send_error(
             &mut ws,
@@ -226,20 +161,46 @@ pub async fn run_ws_session(
         "hello received"
     );
 
-    let mut orchestrator_slot: Option<OrchestratorSlot> = None;
-    let mut telemetry_rx: Option<watch::Receiver<Option<pb::TelemetryFrame>>> = None;
-
     match st.peer_role {
         pb::PeerRole::PeerRoleGameClient => {
+            let mut action_rx: Option<mpsc::Receiver<pb::ActionRequest>> = None;
+            if relay_hub.is_primary_game_agent(&hello.agent_id) {
+                let (tx, rx) = mpsc::channel(relay_hub.action_queue_size());
+                if let Err(e) = relay_hub
+                    .attach_primary_game_sender(tx, &hello.agent_id)
+                    .await
+                    .context("attach primary game sender")
+                {
+                    send_handshake_reject(
+                        &mut ws,
+                        &mut st,
+                        supports_hello_ack,
+                        &handshake_id,
+                        "primary game sender is unavailable",
+                    )
+                    .await?;
+                    return Err(e);
+                }
+                st.is_primary_game = true;
+                action_rx = Some(rx);
+            } else {
+                warn!(
+                    agent_id = %hello.agent_id,
+                    primary_game_agent_id = %relay_hub.primary_game_agent_id(),
+                    "non-primary game client connected; telemetry/action relay disabled for this session"
+                );
+            }
+
             send_handshake_ok(&mut ws, &mut st, supports_hello_ack, &handshake_id).await?;
+            let run_res = run_game_session_loop(&mut ws, &mut st, &relay_hub, action_rx.as_mut()).await;
+            if st.is_primary_game {
+                relay_hub.detach_primary_game_sender().await;
+            }
+            run_res?;
         }
         pb::PeerRole::PeerRoleOrchestrator => {
-            match relay_hub.acquire_orchestrator_slot() {
-                Ok(slot) => {
-                    telemetry_rx = Some(relay_hub.subscribe_telemetry());
-                    orchestrator_slot = Some(slot);
-                    send_handshake_ok(&mut ws, &mut st, supports_hello_ack, &handshake_id).await?;
-                }
+            let _slot = match relay_hub.acquire_orchestrator_slot() {
+                Ok(slot) => slot,
                 Err(OrchestratorAcquireError::NotAllowed) => {
                     send_handshake_reject(
                         &mut ws,
@@ -262,7 +223,22 @@ pub async fn run_ws_session(
                     .await?;
                     anyhow::bail!("orchestrator subscription limit reached");
                 }
-            }
+            };
+
+            let mut telemetry_rx = relay_hub.subscribe_telemetry();
+            let (action_reply_tx, mut action_reply_rx) =
+                mpsc::channel::<ActionRelayFrame>(relay_hub.action_queue_size());
+
+            send_handshake_ok(&mut ws, &mut st, supports_hello_ack, &handshake_id).await?;
+            run_orchestrator_session_loop(
+                &mut ws,
+                &mut st,
+                &relay_hub,
+                &mut telemetry_rx,
+                &mut action_reply_rx,
+                &action_reply_tx,
+            )
+            .await?;
         }
         _ => {
             send_handshake_reject(
@@ -277,14 +253,39 @@ pub async fn run_ws_session(
         }
     }
 
-    if let Some(mut rx) = telemetry_rx {
-        run_orchestrator_session_loop(&mut ws, &mut st, &relay_hub, &mut rx).await?;
-    } else {
-        run_standard_session_loop(&mut ws, &mut st, &relay_hub).await?;
-    }
-
-    drop(orchestrator_slot);
     Ok(())
+}
+
+async fn run_game_session_loop(
+    ws: &mut tokio_tungstenite::WebSocketStream<TlsStream<TcpStream>>,
+    st: &mut SessionState,
+    relay_hub: &Arc<RelayHub>,
+    action_rx: Option<&mut mpsc::Receiver<pb::ActionRequest>>,
+) -> Result<()> {
+    if let Some(action_rx) = action_rx {
+        loop {
+            tokio::select! {
+                msg = ws.next() => {
+                    let Some(msg) = msg else {
+                        break;
+                    };
+                    let msg = msg.context("ws read")?;
+                    if !handle_ws_message(ws, st, relay_hub, msg, None).await? {
+                        break;
+                    }
+                }
+                action_req = action_rx.recv() => {
+                    let Some(action_req) = action_req else {
+                        break;
+                    };
+                    send_envelope(ws, st, pb::envelope::Payload::ActionReq(action_req)).await?;
+                }
+            }
+        }
+        Ok(())
+    } else {
+        run_standard_session_loop(ws, st, relay_hub).await
+    }
 }
 
 async fn run_standard_session_loop(
@@ -294,7 +295,7 @@ async fn run_standard_session_loop(
 ) -> Result<()> {
     while let Some(msg) = ws.next().await {
         let msg = msg.context("ws read")?;
-        if !handle_ws_message(ws, st, relay_hub, msg).await? {
+        if !handle_ws_message(ws, st, relay_hub, msg, None).await? {
             break;
         }
     }
@@ -306,6 +307,8 @@ async fn run_orchestrator_session_loop(
     st: &mut SessionState,
     relay_hub: &Arc<RelayHub>,
     telemetry_rx: &mut watch::Receiver<Option<pb::TelemetryFrame>>,
+    action_reply_rx: &mut mpsc::Receiver<ActionRelayFrame>,
+    action_reply_tx: &mpsc::Sender<ActionRelayFrame>,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -314,7 +317,7 @@ async fn run_orchestrator_session_loop(
                     break;
                 };
                 let msg = msg.context("ws read")?;
-                if !handle_ws_message(ws, st, relay_hub, msg).await? {
+                if !handle_ws_message(ws, st, relay_hub, msg, Some(action_reply_tx)).await? {
                     break;
                 }
             }
@@ -324,14 +327,26 @@ async fn run_orchestrator_session_loop(
                         send_envelope(ws, st, pb::envelope::Payload::Telemetry(telemetry)).await?;
                     }
                     None => {
-                        warn!(session_id = %st.session_id, "relay channel closed");
+                        warn!(session_id = %st.session_id, "telemetry relay channel closed");
                         break;
+                    }
+                }
+            }
+            action_reply = action_reply_rx.recv() => {
+                let Some(action_reply) = action_reply else {
+                    break;
+                };
+                match action_reply {
+                    ActionRelayFrame::Ack(ack) => {
+                        send_envelope(ws, st, pb::envelope::Payload::ActionAck(ack)).await?;
+                    }
+                    ActionRelayFrame::Result(result) => {
+                        send_envelope(ws, st, pb::envelope::Payload::ActionRes(result)).await?;
                     }
                 }
             }
         }
     }
-
     Ok(())
 }
 
@@ -349,6 +364,7 @@ async fn handle_ws_message(
     st: &mut SessionState,
     relay_hub: &Arc<RelayHub>,
     msg: WsMessage,
+    action_reply_tx: Option<&mpsc::Sender<ActionRelayFrame>>,
 ) -> Result<bool> {
     if msg.is_close() {
         info!(session_id = %st.session_id, "ws close");
@@ -390,10 +406,9 @@ async fn handle_ws_message(
     }
 
     st.last_peer_seq = env.seq;
-
     match env.payload {
         Some(pb::envelope::Payload::Telemetry(t)) => {
-            if st.peer_role == pb::PeerRole::PeerRoleGameClient {
+            if st.peer_role == pb::PeerRole::PeerRoleGameClient && st.is_primary_game {
                 relay_hub.publish_telemetry(&t);
             }
             info!(
@@ -423,6 +438,38 @@ async fn handle_ws_message(
             };
             send_envelope(ws, st, pb::envelope::Payload::TimeSyncRes(res)).await?;
         }
+        Some(pb::envelope::Payload::ActionReq(req)) => {
+            if st.peer_role != pb::PeerRole::PeerRoleOrchestrator {
+                warn!(session_id = %st.session_id, "unexpected action_req from non-orchestrator");
+                return Ok(true);
+            }
+            let Some(action_reply_tx) = action_reply_tx else {
+                warn!(session_id = %st.session_id, "missing orchestrator action reply channel");
+                return Ok(true);
+            };
+            if let Err(e) = relay_hub.enqueue_action(req.clone(), action_reply_tx.clone()).await {
+                let nack = pb::ActionAck {
+                    request_id: req.request_id,
+                    accepted: false,
+                    reason: e.to_string(),
+                };
+                send_envelope(ws, st, pb::envelope::Payload::ActionAck(nack)).await?;
+            }
+        }
+        Some(pb::envelope::Payload::ActionAck(ack)) => {
+            if st.peer_role == pb::PeerRole::PeerRoleGameClient && st.is_primary_game {
+                relay_hub.route_action_ack(&ack).await;
+            } else {
+                warn!(session_id = %st.session_id, "unexpected action_ack");
+            }
+        }
+        Some(pb::envelope::Payload::ActionRes(result)) => {
+            if st.peer_role == pb::PeerRole::PeerRoleGameClient && st.is_primary_game {
+                relay_hub.route_action_result(&result).await;
+            } else {
+                warn!(session_id = %st.session_id, "unexpected action_res");
+            }
+        }
         Some(pb::envelope::Payload::Hello(_)) => {
             warn!(session_id = %st.session_id, "unexpected hello");
         }
@@ -430,13 +477,15 @@ async fn handle_ws_message(
             warn!(session_id = %st.session_id, "unexpected hello_ack");
         }
         Some(pb::envelope::Payload::Error(err)) => {
-            warn!(code = err.code, correlation_id = %err.correlation_id, message = %err.message, "peer error");
+            warn!(
+                code = err.code,
+                correlation_id = %err.correlation_id,
+                message = %err.message,
+                "peer error"
+            );
         }
-        _ => {
-            // Keep action payloads ignored in MVP-5.
-        }
+        None => {}
     }
-
     Ok(true)
 }
 
@@ -459,7 +508,7 @@ async fn send_handshake_ok(
             accepted: true,
             reason: "ok".to_string(),
             negotiated_capabilities: negotiated,
-            server_version: "miqbot-bridge-server/0.2.0".to_string(),
+            server_version: "miqbot-bridge-server/0.3.0".to_string(),
         };
         send_envelope(ws, st, pb::envelope::Payload::HelloAck(ack)).await
     } else {
@@ -469,8 +518,9 @@ async fn send_handshake_ok(
             capabilities: vec![
                 pb::Capability::CapTelemetryV1 as i32,
                 pb::Capability::CapTimesyncV1 as i32,
+                pb::Capability::CapActionsV1 as i32,
             ],
-            client_version: "miqbot-bridge-server/0.2.0".to_string(),
+            client_version: "miqbot-bridge-server/0.3.0".to_string(),
             handshake_id: handshake_id.to_string(),
         };
         send_envelope(ws, st, pb::envelope::Payload::Hello(reply)).await
@@ -498,7 +548,7 @@ async fn send_handshake_reject(
             accepted: false,
             reason: reason.to_string(),
             negotiated_capabilities: Vec::new(),
-            server_version: "miqbot-bridge-server/0.2.0".to_string(),
+            server_version: "miqbot-bridge-server/0.3.0".to_string(),
         };
         send_envelope(ws, st, pb::envelope::Payload::HelloAck(ack)).await
     } else {

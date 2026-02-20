@@ -15,6 +15,8 @@ Collect Minecraft client telemetry and send it to the Bridge over secure transpo
 - Maintains per-connection sequence and state version counters.
 - Uses latest-only telemetry buffering so game tick thread never blocks on network I/O.
 - Emits telemetry values normalized to contract ranges.
+- Executes allowlisted actions only (`STOP_ALL`, `BARITONE_GOTO`) with TTL/target checks.
+- Enforces action terminal result emission for every accepted action request.
 
 ## Public API
 - Client config file: `.minecraft/config/MiqBOT-client.properties`
@@ -28,6 +30,6 @@ Collect Minecraft client telemetry and send it to the Bridge over secure transpo
 - Source of truth: `proto/MiqBOT_bridge_v1.proto`
 
 ## Explicitly Out of Scope
-- Baritone/path planning
-- Action execution loop
-- Persistent storage
+- Full Baritone integration/runtime embedding.
+- Arbitrary remote command execution outside allowlist.
+- Persistent storage.

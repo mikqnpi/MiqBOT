@@ -16,6 +16,8 @@ Provide secure transport and canonical protocol handling for game telemetry and 
 - Accepts only protocol version `1` envelopes.
 - Enforces max websocket frame/message size limit.
 - Requires `Hello` frame as first payload within timeout.
+- Relays telemetry as latest-only stream and relays actions as ordered queue (non-latest-only).
+- Routes action responses by `request_id` correlation back to orchestrator session.
 
 ## Public API
 - WSS endpoint: `wss://<bind_addr>:40100`
@@ -26,7 +28,7 @@ Provide secure transport and canonical protocol handling for game telemetry and 
 
 ## Inbound / Outbound
 - Inbound: WSS binary protobuf envelopes from authenticated clients.
-- Outbound: WSS binary protobuf envelopes (`HelloAck`/`Hello`, relayed `TelemetryFrame`, `TimeSyncResponse`, `ErrorFrame`).
+- Outbound: WSS binary protobuf envelopes (`HelloAck`/`Hello`, relayed `TelemetryFrame`, relayed `Action*`, `TimeSyncResponse`, `ErrorFrame`).
 
 ## Canonical Contract
 - Source of truth: `proto/MiqBOT_bridge_v1.proto`

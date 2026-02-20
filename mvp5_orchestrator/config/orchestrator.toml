@@ -1,13 +1,22 @@
-﻿bridge_url = "wss://127.0.0.1:40100"
+bridge_url = "wss://127.0.0.1:40100"
 agent_id = "orchestrator"
 client_version = "miqbot-orchestrator-mvp5/0.1.0"
+primary_game_agent_id = "gamepc"
 
 tts_url = "http://127.0.0.1:40300"
 subtitle_url = "http://127.0.0.1:48100"
+tts_mode = "wav_only"
 
 silence_gap_ms = 1200
-loop_sleep_ms = 100
+state_tick_ms = 100
 duplicate_cooldown_ms = 900
+queue_max_p0 = 32
+queue_max_p1 = 128
+queue_max_p2 = 256
+chat_deadline_ms = 3500
+filler_deadline_ms = 2000
+action_ack_timeout_ms = 1000
+action_result_timeout_ms = 5000
 
 audio_output_dir = "artifacts/audio"
 fallback_wav_path = "mvp5_out.wav"

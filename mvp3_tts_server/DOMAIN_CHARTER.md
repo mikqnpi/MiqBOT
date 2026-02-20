@@ -18,15 +18,18 @@ Expose a stable HTTP text-to-audio interface with fixed sample-rate behavior for
 - `POST /v1/tts`
   - Request JSON: `text`, `sample_rate_hz`
   - Response: WAV bytes
+- `POST /v1/tts_with_meta`
+  - Request JSON: `text`, `sample_rate_hz`, optional `engine`
+  - Response JSON: `ttft_ms`, `total_ms`, `utterances`, `chunks`, `audio_wav_base64`
 
 ## Inbound / Outbound
 - Inbound: text payload from orchestrator or tooling.
-- Outbound: WAV bytes.
+- Outbound: WAV bytes or WAV+metadata JSON.
 
 ## Canonical Contract
 - HTTP contract defined in this MVP package.
 
 ## Explicitly Out of Scope
-- Speaker embeddings
-- Multi-model fallback
-- Production voice quality guarantees
+- Production Qwen runtime optimization.
+- Automatic variant selection logic.
+- Production voice quality guarantees.

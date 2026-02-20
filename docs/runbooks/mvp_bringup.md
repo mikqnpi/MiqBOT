@@ -1,4 +1,4 @@
-﻿# MVP Bring-up Runbook (Windows-first)
+# MVP Bring-up Runbook (Windows-first)
 
 ## Prerequisites
 - Windows 11 / PowerShell 7+
@@ -67,6 +67,12 @@ Run in `mvp1_bridge_server/certs`:
 ## Step 6: Start MVP-5 Orchestrator
 1. `cd mvp5_orchestrator`
 2. Confirm `config/orchestrator.toml` paths point to valid bridge cert/key/ca files.
+3. Confirm action/speech settings:
+   - `primary_game_agent_id=gamepc`
+   - `tts_mode=wav_only` (or `with_meta`)
+   - `queue_max_p0/p1/p2`
+   - `chat_deadline_ms` / `filler_deadline_ms`
+   - `action_ack_timeout_ms` / `action_result_timeout_ms`
 3. `cargo run --release`
 4. Expected behavior:
    - Bridge telemetry is received by orchestrator.
@@ -86,6 +92,13 @@ Run in `mvp1_bridge_server/certs`:
    - `pipeline_latency_ms`
 4. Confirm bridge relay path:
    - Fabric telemetry arrives at Bridge and is forwarded to Orchestrator.
+5. Confirm action relay path:
+   - Send `ActionRequest(STOP_ALL)` from orchestrator and observe:
+     - Bridge forwards to primary game client only.
+     - Fabric returns `ActionAck` and terminal `ActionResult`.
+6. Confirm speech queue behavior:
+   - P1/P2 jobs exceeding deadline are dropped.
+   - No sustained silence beyond `silence_gap_ms`.
 
 ## MVP-5 P0 stabilization notes
 - Bridge send timeout:
@@ -97,6 +110,27 @@ Run in `mvp1_bridge_server/certs`:
 - OBS subtitle clear ordering:
   - Gateway uses generation checks for clear tasks.
   - On rapid consecutive subtitle posts, old clear tasks must not clear newer subtitle text.
+
+## MVP-7/8 Action notes
+- Bridge config now includes:
+  - `relay.primary_game_agent_id`
+  - `relay.action_queue_size`
+  - `relay.action_send_timeout_ms`
+- Action routing policy:
+  - `ORCHESTRATOR -> GAME_CLIENT` requests are queued and forwarded in order.
+  - Telemetry remains latest-only; Actions are not latest-only.
+- Fabric allowlist:
+  - supported now: `STOP_ALL`, `MOVE_VEC`, `BARITONE_GOTO` (placeholder execution result if Baritone is absent).
+
+## MVP-9 TTS notes
+- TTS server supports engine mode via `MIQBOT_TTS_ENGINE`:
+  - `stub` / `qwen_base` / `qwen_voice_design` / `qwen_custom_voice`
+- New endpoint:
+  - `POST /v1/tts_with_meta` returning `ttft_ms`, `total_ms`, `utterances`, `chunks`, and `audio_wav_base64`.
+- Optional benchmark:
+  - `python mvp3_tts_server/bench_variants.py` (writes `bench_results.jsonl`)
+  - Each JSONL case record includes `success/failure`, `ttft_ms`, `total_ms`, `request_elapsed_ms`, and `rss_kb`.
+  - Summary record includes aggregated `failure_rate`.
 
 ## Integration handoff points
 - Bridge contract: `proto/MiqBOT_bridge_v1.proto`

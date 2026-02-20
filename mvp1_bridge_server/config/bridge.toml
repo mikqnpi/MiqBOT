@@ -14,3 +14,6 @@ client_ca_cert_pem = "certs/ca.crt.pem"
 allow_orchestrator_subscribe = true
 max_orchestrator_subscribers = 4
 min_relay_interval_ms = 50
+primary_game_agent_id = "gamepc"
+action_queue_size = 128
+action_send_timeout_ms = 1000
